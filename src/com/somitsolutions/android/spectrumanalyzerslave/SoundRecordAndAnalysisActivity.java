@@ -19,10 +19,8 @@ import android.media.AudioTrack;
 import android.media.MediaRecorder;
 import android.os.AsyncTask;
 import android.os.Bundle;
-import android.os.CountDownTimer;
 import android.util.Log;
 import android.view.Display;
-import android.view.Gravity;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.ViewGroup.LayoutParams;
@@ -33,7 +31,6 @@ import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
 import ca.uol.aig.fftpack.RealDoubleFFT;
 
 
@@ -48,7 +45,7 @@ public class SoundRecordAndAnalysisActivity extends Activity implements OnClickL
     private final int sampleRate = 48000;
     private final int NUM_SAMPLES = sampleRate/2;//duration * sampleRate;
     private final double sample[] = new double[NUM_SAMPLES];
-    private final int freqOfTone = 880; // hz A5?
+    private final int freqOfTone = 1000; // hz A5?
 
     private AudioTrack mAudioTrack;
     private final byte generatedSnd[] = new byte[2 * NUM_SAMPLES];
@@ -65,13 +62,16 @@ public class SoundRecordAndAnalysisActivity extends Activity implements OnClickL
     private final int num_records = 300;
     private int times_index = 0;
     private long timesRecord[] = new long[num_records];
-    private long selfSpeakerDelay;
+    
     
     RecordAudio recordTask;
     ImageView imageViewDisplaySpectrum;
     MyImageView imageViewScale;
     Bitmap bitmapDisplaySpectrum;
     TextView selfStatusText;
+    TextView timeWaitedText;
+    
+    private long selfSpeakerDelay;
     
     Canvas canvasDisplaySpectrum;
     
@@ -160,6 +160,15 @@ public class SoundRecordAndAnalysisActivity extends Activity implements OnClickL
 		return delta;
     }
     
+    private long waitASecond() {
+    	long startTime = System.nanoTime();
+    	long delta = 0;
+    	while(delta < 1000000000) {
+    		delta = System.nanoTime() - startTime;
+    	}
+    	return delta;
+    }
+    
     @Override
 	public void onWindowFocusChanged (boolean hasFocus) {
     	//left_Of_BimapScale = main.getC.getLeft();
@@ -169,11 +178,15 @@ public class SoundRecordAndAnalysisActivity extends Activity implements OnClickL
     	left_Of_DisplaySpectrum = bitmap.getLeft();
     }
     private class RecordAudio extends AsyncTask<Void, Boolean, Void> {
-    	private LinkedList<Double> selfFiveBuffer = new LinkedList<Double>();
+    	/*private LinkedList<Double> selfFiveBuffer = new LinkedList<Double>();
     	private LinkedList<Double> receiveFiveBuffer = new LinkedList<Double>();
     	double selfFiveAverage;
-    	double receiveFiveAverage;
-   
+    	double receiveFiveAverage;*/
+    	private final String SELF_DETECTED_STRING = "DETECTED SELF";
+        private long timeWaited;
+        boolean heardSelf = false;
+    	boolean heardOther = false;
+    	
         @Override
         protected Void doInBackground(Void... params) {
        
@@ -185,7 +198,7 @@ public class SoundRecordAndAnalysisActivity extends Activity implements OnClickL
             audioRecord = new AudioRecord(MediaRecorder.AudioSource.DEFAULT, frequency, channelConfiguration, audioEncoding, bufferSize);
             int bufferReadResult;
             short[] buffer = new short[blockSize];
-            double[] toTransform = new double[blockSize];
+            //double[] toTransform = new double[blockSize];
             try{
             	audioRecord.startRecording();
             }
@@ -214,14 +227,20 @@ public class SoundRecordAndAnalysisActivity extends Activity implements OnClickL
 	                //toTransform[i] = (double) buffer[i] / 32768.0; // signed 16 bit
 	            }
 	            
-	            if(detectTone(sampleRate, freqOfTone, zeroCrossingIndices)) {
-            		Log.e(TAG, "Detected self tone " + String.valueOf(freqOfTone));
-            		selfSpeakerDelay = stopTiming();
+	            
+            	if(!heardOther && detectTone(sampleRate, freqOfTone / 2, zeroCrossingIndices)) {
+            		Log.e(TAG, "Detected receive tone = " + String.valueOf(freqOfTone / 2));            		
+            		timeWaited = waitASecond();
+            		heardOther = true;
             		publishProgress(false);
-            	}
-            	if(detectTone(sampleRate, freqOfTone / 2, zeroCrossingIndices)) {
-            		Log.e(TAG, "Detected receive tone = " + String.valueOf(freqOfTone / 2));
             		playSound();
+            	}
+            	
+            	else if(!heardSelf && detectTone(sampleRate, freqOfTone, zeroCrossingIndices)) {
+            		Log.e(SELF_DETECTED_STRING, "Detected self tone " + String.valueOf(freqOfTone));
+            		selfSpeakerDelay = stopTiming();
+            		heardSelf = true;
+            		publishProgress(true);
             	}
 
 	            //transformer.ft(toTransform);
@@ -241,70 +260,18 @@ public class SoundRecordAndAnalysisActivity extends Activity implements OnClickL
             return null;
         }
         
-        /*protected void onProgressUpdate(double[]... toTransform) {
-        	Log.e("RecordingProgress", "Displaying in progress");
-        	double magnitudeSelfTone = toTransform[0][880*64/1000];
-        	double magnitudeReceiveTone = toTransform[0][440*64/1000];
-        	
-        	if(selfFiveBuffer.size() >= 3) {
-        		selfFiveBuffer.remove(0);
+        /**
+         * Update views to show time waited after hearing master tone 
+         * and self speaker delay.
+         * @param isSpeakerDelay false if is time waited
+         */
+        @Override
+        protected void onProgressUpdate(Boolean... isSpeakerDelay) {
+        	if(isSpeakerDelay[0]) {
+    			selfStatusText.setText("selfSpeakerDelay: " + String.valueOf(selfSpeakerDelay/1000000.0) + "ms");
+        	} else {
+        		timeWaitedText.setText("Heard master, timeWaited: " + String.valueOf(timeWaited/1000000.0) + "ms");
         	}
-        	selfFiveBuffer.add(magnitudeSelfTone);
-        	for(int i = 0; i < selfFiveBuffer.size(); i++) {
-        		selfFiveAverage += selfFiveBuffer.get(i);
-        	}
-        	selfFiveAverage /= selfFiveBuffer.size();
-        	selfFiveAverage = magnitudeSelfTone;
-        	if(selfFiveAverage > 1.5) {
-        		if(selfSpeakerDelay <= 0) {
-	        		selfSpeakerDelay = stopTiming();
-	        		Log.d(TAG, "DETECTED 880Hz, selfFiveAverage = " + String.valueOf(selfFiveAverage));
-	        		selfStatusText.setText("selfSpeakerDelay = " + String.valueOf(selfSpeakerDelay/1000000.0) + "ms" + 
-	        		"\nselfFiveAverage = " + String.valueOf(selfFiveAverage));
-        		}
-        	}
-        	
-        	if(receiveFiveBuffer.size() >= 3) {
-        		receiveFiveBuffer.remove(0);
-        	}
-        	receiveFiveBuffer.add(magnitudeReceiveTone);
-        	for(int i = 0; i < receiveFiveBuffer.size(); i++) {
-        		receiveFiveAverage += receiveFiveBuffer.get(i);
-        	}
-        	receiveFiveAverage /= receiveFiveBuffer.size();
-        	receiveFiveAverage = magnitudeReceiveTone;
-        	if(receiveFiveAverage > 1.5) {
-        		Log.d(TAG, "DETECTED 440Hz, receiveFiveAverage = " + String.valueOf(receiveFiveAverage));
-        		playSound();
-        	}
-        	
-        	if (width > 512){
-        		for (int i = 0; i < toTransform[0].length; i++) {
-                    int x = 2*i;
-                    int downy = (int) (150 - (toTransform[0][i] * 10));
-                    int upy = 150;
-                    canvasDisplaySpectrum.drawLine(x, downy, x, upy, paintSpectrumDisplay);
-                    }
-                    
-                    imageViewDisplaySpectrum.invalidate();
-               }
-        	
-        	else{
-        		for (int i = 0; i < toTransform[0].length; i++) {
-                    int x = i;
-                    int downy = (int) (150 - (toTransform[0][i] * 10));
-                    int upy = 150;
-                    canvasDisplaySpectrum.drawLine(x, downy, x, upy, paintSpectrumDisplay);
-                    }
-                    
-                    imageViewDisplaySpectrum.invalidate();
-                    }
-                
-        	}*/
-        protected void onProgressUpdate(Boolean receiveComplete) {
-        	if(!receiveComplete) {
-    			selfStatusText.setText("selfSpeakerDelay = " + String.valueOf(selfSpeakerDelay/1000000.0) + "ms");
-        	} 
         }
         
         protected void onPostExecute(Void result) {
@@ -330,6 +297,7 @@ public class SoundRecordAndAnalysisActivity extends Activity implements OnClickL
          */
         private boolean detectTone(int sampleRate, int pitch, List<Integer> indices) {
         	
+        	final int CONSEC_PATTERN_THRESHOLD = indices.size() / 2;
         	if(indices.size() <= 0) {
         		return false;
         	}
@@ -339,20 +307,24 @@ public class SoundRecordAndAnalysisActivity extends Activity implements OnClickL
         	int numTsInT = (int) (T/Ts);
         	
         	int expectedSpacing = numTsInT / 2; // index spacing, 2 zero crossings in a single sinusoid
+        	Log.d(TAG, "Expected spacing for " + String.valueOf(pitch) + " = " + String.valueOf(expectedSpacing));
+        	int diff = 0;
+        	int consecCount = 0;
         	
-        	int a = indices.get(0);
-        	int b;
-        	int conseqCount = 0;
         	for(int i = 1; i < indices.size(); i++) {
-        		b = indices.get(i);
-        		if(b - a >= expectedSpacing - 1 && b - a <= expectedSpacing + 1) {
-        			if(++conseqCount >= 20) {
-        				return true;
-        			}
+        		diff = indices.get(i) - indices.get(i-1);
+        		if((diff >= (expectedSpacing - 1)) && (diff <= (expectedSpacing + 1))) {
+        			consecCount++;
+        			Log.d("Spacing", "Spacing ok, index " + String.valueOf(i) + " = " + String.valueOf(indices.get(i)));
         		} else {
-        			conseqCount = 0;
+        			Log.e("Spacing", "Failed, index " + String.valueOf(i) + " = " + String.valueOf(indices.get(i)));
+        			return false;
         		}
-        		a = b;
+        		
+        		if(consecCount >= CONSEC_PATTERN_THRESHOLD) {
+        			Log.d("Spacing", "Woohoo conseq count = " + String.valueOf(consecCount));
+        			return true;
+        		}
         	}
         	return false;
         }
@@ -452,9 +424,10 @@ public class SoundRecordAndAnalysisActivity extends Activity implements OnClickL
         	startStopButton.setOnClickListener(this);
         	startStopButton.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT));
         	main.addView(startStopButton);
+        	timeWaitedText = new TextView(this);
+        	main.addView(timeWaitedText);
         	selfStatusText = new TextView(this);
         	main.addView(selfStatusText);
-        	
         	setContentView(main);
         	mainActivity = this;
         	}
@@ -550,5 +523,66 @@ public class SoundRecordAndAnalysisActivity extends Activity implements OnClickL
             }
         }
     }    
+	
+	/*protected void onProgressUpdate(double[]... toTransform) {
+	Log.e("RecordingProgress", "Displaying in progress");
+	double magnitudeSelfTone = toTransform[0][880*64/1000];
+	double magnitudeReceiveTone = toTransform[0][440*64/1000];
+	
+	if(selfFiveBuffer.size() >= 3) {
+		selfFiveBuffer.remove(0);
+	}
+	selfFiveBuffer.add(magnitudeSelfTone);
+	for(int i = 0; i < selfFiveBuffer.size(); i++) {
+		selfFiveAverage += selfFiveBuffer.get(i);
+	}
+	selfFiveAverage /= selfFiveBuffer.size();
+	selfFiveAverage = magnitudeSelfTone;
+	if(selfFiveAverage > 1.5) {
+		if(selfSpeakerDelay <= 0) {
+    		selfSpeakerDelay = stopTiming();
+    		Log.d(TAG, "DETECTED 880Hz, selfFiveAverage = " + String.valueOf(selfFiveAverage));
+    		selfStatusText.setText("selfSpeakerDelay = " + String.valueOf(selfSpeakerDelay/1000000.0) + "ms" + 
+    		"\nselfFiveAverage = " + String.valueOf(selfFiveAverage));
+		}
+	}
+	
+	if(receiveFiveBuffer.size() >= 3) {
+		receiveFiveBuffer.remove(0);
+	}
+	receiveFiveBuffer.add(magnitudeReceiveTone);
+	for(int i = 0; i < receiveFiveBuffer.size(); i++) {
+		receiveFiveAverage += receiveFiveBuffer.get(i);
+	}
+	receiveFiveAverage /= receiveFiveBuffer.size();
+	receiveFiveAverage = magnitudeReceiveTone;
+	if(receiveFiveAverage > 1.5) {
+		Log.d(TAG, "DETECTED 440Hz, receiveFiveAverage = " + String.valueOf(receiveFiveAverage));
+		playSound();
+	}
+	
+	if (width > 512){
+		for (int i = 0; i < toTransform[0].length; i++) {
+            int x = 2*i;
+            int downy = (int) (150 - (toTransform[0][i] * 10));
+            int upy = 150;
+            canvasDisplaySpectrum.drawLine(x, downy, x, upy, paintSpectrumDisplay);
+            }
+            
+            imageViewDisplaySpectrum.invalidate();
+       }
+	
+	else{
+		for (int i = 0; i < toTransform[0].length; i++) {
+            int x = i;
+            int downy = (int) (150 - (toTransform[0][i] * 10));
+            int upy = 150;
+            canvasDisplaySpectrum.drawLine(x, downy, x, upy, paintSpectrumDisplay);
+            }
+            
+            imageViewDisplaySpectrum.invalidate();
+            }
+        
+	}*/
 }
     
