@@ -44,7 +44,7 @@
         android:layout_height="wrap_content"
         android:layout_alignLeft="@+id/textView4"
         android:layout_below="@+id/textView4"
-        android:text="Self delay" />
+        android:text="Self tone index" />
 
     <TextView
         android:id="@+id/textView2"
@@ -52,6 +52,15 @@
         android:layout_height="wrap_content"
         android:layout_alignLeft="@+id/textView3"
         android:layout_below="@+id/textView3"
-        android:text="Time waited" />
+        android:text="Other tone index" />
+
+    <TextView
+        android:id="@+id/textView5"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignLeft="@+id/textView2"
+        android:layout_below="@+id/textView2"
+        android:text="Index difference"
+        android:textAppearance="?android:attr/textAppearanceMedium" />
 
 </RelativeLayout>

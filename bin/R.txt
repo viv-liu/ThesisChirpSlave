@@ -347,7 +347,7 @@ int id action_menu_presenter 0x7f05001d
 int id action_mode_bar 0x7f050030
 int id action_mode_bar_stub 0x7f05002f
 int id action_mode_close_button 0x7f050022
-int id action_settings 0x7f050047
+int id action_settings 0x7f050048
 int id activity_chooser_view_content 0x7f050023
 int id always 0x7f05000d
 int id beginning 0x7f050012
@@ -397,9 +397,10 @@ int id split_action_bar 0x7f05001b
 int id submit_area 0x7f05003e
 int id tabMode 0x7f050003
 int id textView1 0x7f050041
-int id textView2 0x7f050044
+int id textView2 0x7f050046
 int id textView3 0x7f050045
-int id textView4 0x7f050046
+int id textView4 0x7f050044
+int id textView5 0x7f050047
 int id title 0x7f050029
 int id top 0x7f050015
 int id up 0x7f050018
