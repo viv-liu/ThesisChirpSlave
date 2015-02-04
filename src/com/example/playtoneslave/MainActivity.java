@@ -31,8 +31,8 @@ public class MainActivity extends Activity {
     // originally from http://marblemice.blogspot.com/2010/04/generate-and-play-tone-in-android.html
     // and modified by Steve Pomeroy <steve@staticfree.info>
     //private final int duration = 1; // seconds
-	private final int micSampleRate = 8000;
-    private final int sampleRate = 8000;
+	private final int micSampleRate = 32000;
+    private final int sampleRate = 32000;
     private final int NUM_SAMPLES = sampleRate/4;
     private final double sample[] = new double[NUM_SAMPLES];
     private final int SELF_TONE_FREQUENCY = 1000; // hz, A5
@@ -43,7 +43,7 @@ public class MainActivity extends Activity {
     int audioEncoding = AudioFormat.ENCODING_PCM_16BIT;
     AudioRecord audioRecord;
     RecordAudio recordTask;
-    int blockSize = 32;
+    int blockSize = 256;
     boolean started = false;
     
     // Speaker out variables
@@ -51,6 +51,7 @@ public class MainActivity extends Activity {
     private final byte generatedSnd[] = new byte[2 * NUM_SAMPLES];
     
     private int beepNum = 0;
+    List<Integer> diffList = new ArrayList<Integer>();
     
     // Views
     private TextView mStatusText;
@@ -106,7 +107,7 @@ public class MainActivity extends Activity {
 				if(mAudioTrack != null) mAudioTrack.stop();
 				if(recordTask != null) recordTask.cancel(false);
 				//createTimesRecordFile();
-				createBigBufferFile(grandBuffer);
+				createBigBufferFile(diffList);
 			}
 	      });
     }
@@ -154,13 +155,13 @@ public class MainActivity extends Activity {
         mAudioTrack.play();
     }
     
-    private void createBigBufferFile(List<Short> buffer) {
+    private void createBigBufferFile(List<Integer> buffer) {
     	Calendar c = Calendar.getInstance(); 
         SimpleDateFormat dateFormat = new SimpleDateFormat("dd-MM-yyyy");
         SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm:ss");
         dateFormat.setTimeZone(c.getTimeZone());
         timeFormat.setTimeZone(c.getTimeZone());
-    	String FILE_NAME = timeFormat.format(c.getTime())+"Buffer.csv";
+    	String FILE_NAME = timeFormat.format(c.getTime())+"_DiffList.csv";
     	if (isExternalStorageWritable()) {
     		File root = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS); 
     		File dir = new File (root.getAbsolutePath() + "/Thesis/" + dateFormat.format(c.getTime()));
@@ -258,6 +259,8 @@ public class MainActivity extends Activity {
     	
     	boolean heardSelf = false;
     	boolean heardOther = false;
+    	
+    	
         @Override
         protected Void doInBackground(Void... params) {
         	if(isCancelled()){
@@ -294,6 +297,7 @@ public class MainActivity extends Activity {
 	            	
 	            	if((buffer[i] < 0 && buffer[i-1] > 0) || (buffer[i] > 0 && buffer[i-1] < 0)) {
 	            		zeroCrossingIndices.add(i);
+	            		Log.d(TAG, "Zero crossing " + String.valueOf(i));
 	            	}
 	            }
 	            int isOtherTone = detectTone(micSampleRate, OTHER_TONE_FREQUENCY, zeroCrossingIndices);
@@ -312,6 +316,7 @@ public class MainActivity extends Activity {
             		heardSelf = true;
             		selfToneBeginningIndex = (curBufferCount - 1) * blockSize + isSelfTone;
             		publishProgress(true);
+            		diffList.add(selfToneBeginningIndex - otherToneBeginningIndex);
             	}
 	            
 	            if(isCancelled())
@@ -369,7 +374,7 @@ public class MainActivity extends Activity {
         	int expectedSpacing = numTsInT / 2; // index spacing, 2 zero crossings in a single sinusoid
         	
         	int CONSEC_PATTERN_THRESHOLD = blockSize/expectedSpacing - 2;
-        	
+        	Log.d("Spacing", "Consec pattern threshold = " + String.valueOf(CONSEC_PATTERN_THRESHOLD));
         	Log.d(TAG, "Expected spacing for " + String.valueOf(pitch) + " = " + String.valueOf(expectedSpacing));
         	int diff = 0;
         	int consecCount = 0;
@@ -398,6 +403,7 @@ public class MainActivity extends Activity {
         	otherToneBeginningIndex = -1;
         	heardSelf = false;
         	heardOther = false;
+        	diffList.clear();
         }
 	}
 }
