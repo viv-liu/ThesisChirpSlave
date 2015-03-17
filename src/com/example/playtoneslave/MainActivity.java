@@ -32,11 +32,11 @@ public class MainActivity extends Activity {
     // and modified by Steve Pomeroy <steve@staticfree.info>
     //private final int duration = 1;
 	private final int micSampleRate = 8000;
-    private final int sampleRate = 8000;
-    private final int NUM_SAMPLES = sampleRate/4;
-    private final double sample[] = new double[NUM_SAMPLES];
-    private final int SELF_TONE_FREQUENCY = 600; // hz, A5
-    private final int OTHER_TONE_FREQUENCY = 500;
+	
+    private final int SELF_TONE_FREQUENCY = 500; // hz, A5
+    private final int SELF_TONE_FREQUENCY_2 = SELF_TONE_FREQUENCY * 2;
+    private final int OTHER_TONE_FREQUENCY = 400;
+    private final int OTHER_TONE_FREQUENCY_2 = OTHER_TONE_FREQUENCY * 2;
 
     // Microphone in variables
     int channelConfiguration = AudioFormat.CHANNEL_IN_MONO;
@@ -48,16 +48,24 @@ public class MainActivity extends Activity {
     
     // Speaker out variables
     private AudioTrack mAudioTrack;
+    private final int speakerSampleRate = 8000;
+    private final double outToneDurationInS = 0.125;
+    private final int numTones = 12;
+    private final int numSamplesInTone_mic = (int) (micSampleRate * outToneDurationInS);
+    private final int NUM_SAMPLES = (int) (speakerSampleRate * outToneDurationInS * numTones);
+   
+    private final double sample[] = new double[NUM_SAMPLES];
     private final byte generatedSnd[] = new byte[2 * NUM_SAMPLES];
+    private final double durationOfSilenceInS = 0.5;
+    private final int numSamplesInSilence = (int) (speakerSampleRate * durationOfSilenceInS);
     
-    private int selfToneBeginningIndex = -1;
-	private int otherToneBeginningIndex = -1;
-    
+	private List<Integer>selfToneEdges = new ArrayList<Integer>();
+	private List<Integer>otherToneEdges = new ArrayList<Integer>();
+	
     // Views
     private TextView mStatusText;
     private TextView mOtherToneIndexText;
     private TextView mSelfToneIndexText;
-    private TextView mBeepNumText;
     private TextView mIndexDiffText;
     private Button mResetButton;
     private Button mSaveButton;
@@ -82,7 +90,6 @@ public class MainActivity extends Activity {
         mStatusText.setText(init_s);
         mOtherToneIndexText = (TextView) findViewById(R.id.textView2);
         mSelfToneIndexText = (TextView) findViewById(R.id.textView3);
-        mBeepNumText = (TextView) findViewById(R.id.textView4);
         mIndexDiffText = (TextView) findViewById(R.id.textView5);
         
         mResetButton = (Button) findViewById(R.id.button1);        
@@ -124,7 +131,7 @@ public class MainActivity extends Activity {
 				} else if(mSaveButton.getText().equals("Save records")) {
 					mStatusText.setText(saving_s);
 					// Save records
-					createBigBufferFile(grandBuffer, selfToneBeginningIndex, otherToneBeginningIndex);
+					createBigBufferFile(grandBuffer, selfToneEdges, otherToneEdges);
 					
 					// Reset
 					if(mAudioTrack != null) mAudioTrack.stop();
@@ -157,17 +164,22 @@ public class MainActivity extends Activity {
     protected void onResume() {
     	super.onResume();
     	mAudioTrack = new AudioTrack(AudioManager.STREAM_MUSIC,
-                sampleRate, AudioFormat.CHANNEL_OUT_MONO,
+                speakerSampleRate, AudioFormat.CHANNEL_OUT_MONO,
                 AudioFormat.ENCODING_PCM_16BIT, generatedSnd.length,
                 AudioTrack.MODE_STATIC);
         mAudioTrack.write(generatedSnd, 0, generatedSnd.length);
     }
     
     void genTone(){
-        // fill out the array
-        for (int i = 0; i < NUM_SAMPLES; ++i) {
-            sample[i] = Math.sin(2 * Math.PI * i / (sampleRate/SELF_TONE_FREQUENCY));
-        }
+    	int numSamplesPerTone = (int) (speakerSampleRate * outToneDurationInS);
+    	int curFreq = SELF_TONE_FREQUENCY;
+    	for(int i = 0; i < NUM_SAMPLES; i+=numSamplesPerTone) {
+	        // fill out the array
+	        for (int j = 0; j < numSamplesPerTone; ++j) {
+	            sample[j + i] = Math.sin(2 * Math.PI * j / (speakerSampleRate/curFreq));
+	        }
+	        curFreq = (curFreq == SELF_TONE_FREQUENCY ? SELF_TONE_FREQUENCY_2 : SELF_TONE_FREQUENCY);
+    	}
 
         // convert to 16 bit pcm sound array
         // assumes the sample buffer is normalised.
@@ -183,9 +195,9 @@ public class MainActivity extends Activity {
     }
 
     void playSound(){
-    	/*mAudioTrack.stop();
+    	mAudioTrack.stop();
     	mAudioTrack.reloadStaticData();
-        mAudioTrack.play();*/
+        mAudioTrack.play();
     }
     
     
@@ -194,14 +206,14 @@ public class MainActivity extends Activity {
     	
     	private final String SELF_DETECTED_STRING = "DETECTED_SELF";
     	
-    	private final int CONSEQ_COUNT_THRESHOLD = 10;
+    	private final int CONSEQ_COUNT_THRESHOLD = 5;
     	private int expectedSelfSpacing = expectedZerosSpacing(micSampleRate, SELF_TONE_FREQUENCY);
     	private int expectedOtherSpacing = expectedZerosSpacing(micSampleRate, OTHER_TONE_FREQUENCY);
-    	private int lastNoiseIndex = -1;
     	
     	boolean heardSelf = true;
     	boolean heardOther = false;
-    	
+    	int indexToPlaySound = -1;
+    	int indexToEndRecording = -1;
     	
         @Override
         protected Void doInBackground(Void... params) {
@@ -225,7 +237,6 @@ public class MainActivity extends Activity {
             }
             while (started) {
             	int i_lastZero = 0;
-            	int i_startConseq = 0;
             	int conseqCount = 0;
             	
             	zeroCrossingIndices.clear();
@@ -239,13 +250,18 @@ public class MainActivity extends Activity {
 	            	
 	            	if(grandBuffer.size() <= 100000)
 	            		grandBuffer.add(buffer[i-1]);
-	            	//grandBufferSize = grandBuffer.size();
-	            	// Check if buffer[i] is small and slope is small
-	            	//if((Math.abs(buffer[i]) <= 1000) && ((Math.abs(buffer[i] - buffer[i-1]) < 1000))) {
 	            	
-	            	/*if(grandBufferSize >= 2) {
-	            		if((Math.abs(grandBuffer.get(grandBufferSize - 1)) <= 2000) && 
-	            		  ((Math.abs(grandBuffer.get(grandBufferSize - 1) - grandBuffer.get(grandBufferSize - 2)) < 200))) {*/
+	            	if(indexToPlaySound > 0 && grandBuffer.size() >= indexToPlaySound) {
+	            		indexToPlaySound = -1;
+	            		playSound();
+	            	}
+	            	
+	            	if(indexToEndRecording > 0 && grandBuffer.size() >= indexToEndRecording) {
+	            		indexToEndRecording = -1;
+	            		publishProgress(true);
+	            		break;
+	            	}
+	            	
 	            	if((conseqCount < CONSEQ_COUNT_THRESHOLD) &&
 	            		((buffer[i] < 0 && buffer[i-1] > 0) || (buffer[i] > 0 && buffer[i-1] < 0))) {
 	            		if(!heardSelf) {
@@ -258,9 +274,12 @@ public class MainActivity extends Activity {
 	            				Log.d(TAG, "Bad spacing " + String.valueOf(i));
 	            			}
 	            			if(conseqCount >= CONSEQ_COUNT_THRESHOLD) {
-		            			i_startConseq = lastNoiseIndex; //grandBuffer.size() - (conseqCount - 1) * expectedSelfSpacing;
+	            				heardSelf = true;
+	            				indexToEndRecording = grandBuffer.size() + (int) (micSampleRate * outToneDurationInS * numTones);
+		            			//i_startConseq = lastNoiseIndex; //grandBuffer.size() - (conseqCount - 1) * expectedSelfSpacing;
 		            		}
-	            		} else if(!heardOther) {
+	            		} else
+	            		if(!heardOther) {
 	            			if(((i-i_lastZero) >= (expectedOtherSpacing - 1)) && 
 	            					((i-i_lastZero) <= (expectedOtherSpacing + 1))) {
 	            				conseqCount++;
@@ -270,28 +289,15 @@ public class MainActivity extends Activity {
 	            				Log.d(TAG, "Bad spacing " + String.valueOf(i));
 	            			}
 	            			if(conseqCount >= CONSEQ_COUNT_THRESHOLD) {
-		            			i_startConseq = lastNoiseIndex; //grandBuffer.size() - (conseqCount - 1) * expectedOtherSpacing;
+	            				heardOther = true;
+	            				heardSelf = false;
+	            				indexToPlaySound = grandBuffer.size() + (int) (micSampleRate * outToneDurationInS * numTones) + numSamplesInSilence;
+		            			//i_startConseq = lastNoiseIndex; //grandBuffer.size() - (conseqCount - 1) * expectedOtherSpacing;
 		            		}
 	            		}
 	            		i_lastZero = i;
 	            	}
 	            }
-	            
-	            if(!heardOther && conseqCount >= CONSEQ_COUNT_THRESHOLD) {
-            		heardOther = true;
-            		heardSelf = false;
-            		otherToneBeginningIndex = i_startConseq;
-            		publishProgress(false);
-            		waitASecond(500);
-            		playSound();
-            	}
-            	
-            	else if(!heardSelf && conseqCount >= CONSEQ_COUNT_THRESHOLD) {
-            		heardOther = false;
-            		heardSelf = true;
-            		selfToneBeginningIndex = i_startConseq;
-            		publishProgress(true);
-            	}
 	            
 	            if(isCancelled())
 	            	break;
@@ -309,11 +315,11 @@ public class MainActivity extends Activity {
         }
         
         @Override
-		protected void onProgressUpdate(Boolean... isLaterBeep) {
-        	mSelfToneIndexText.setText("Self tone index: " + String.valueOf(selfToneBeginningIndex));
-        	mOtherToneIndexText.setText("Other tone index: " + String.valueOf(otherToneBeginningIndex));
-        	if(isLaterBeep[0])
-        		mIndexDiffText.setText("Index diff: " + String.valueOf(selfToneBeginningIndex - otherToneBeginningIndex));
+		protected void onProgressUpdate(Boolean... isRecordingFinished) {
+        	if(isRecordingFinished[0]) {
+				mSaveButton.setText("Stop and analyze");
+				mSaveButton.performClick();
+        	}
 		}
         
         protected void onPostExecute(Void result) {
@@ -377,101 +383,104 @@ public class MainActivity extends Activity {
         	return -1;
         }
         
-        private long waitASecond(long timeInMillis) {
-        	long timeInNanos = timeInMillis*1000000;
-        	long startTime = System.nanoTime();
-        	long delta = 0;
-        	while(delta < timeInNanos) {
-        		delta = System.nanoTime() - startTime;
-        	}
-        	
-        	return delta;
-        }
         public void reset() {
-        	selfToneBeginningIndex = -1;
-        	otherToneBeginningIndex = -1;
         	heardSelf = false;
         	heardOther = false;
         }
 	}
     
-    /*************************************************************
-     * DATA ANALYSIS
-     *************************************************************/
-    	private int expectedZerosSpacing(int sampleRate, int pitch) {
-        	double Ts = 1.0 / sampleRate;
-        	double T = 1.0 / pitch;
-        	int numTsInT = (int) (T/Ts);
-        	int expectedSpacing = numTsInT / 2;
-        	return expectedSpacing;
-        }
-    	private void bufferAnalysis() {
-    		int expectedSelfSpacing = expectedZerosSpacing(sampleRate, SELF_TONE_FREQUENCY);
-        	int expectedOtherSpacing = expectedZerosSpacing(sampleRate, OTHER_TONE_FREQUENCY);
-        	
-    		final int CONSEQ_COUNT_THRESHOLD = 10;
-    		int lastNoiseIndex = -1;
-    		int i_lastZero = 0;
-        	int conseqCount = 0;
-        	boolean heardSelf = true;
-        	boolean heardOther = false;
-        	
-        	selfToneBeginningIndex = -1;
-        	otherToneBeginningIndex = -1;
-        	
-    		for (int i = 1; i < grandBuffer.size(); i++) {
-            	// Check if buffer[i] is small and slope is small
-            	/*if(grandBufferSize >= 2) {
-            		if((Math.abs(grandBuffer.get(grandBufferSize - 1))<= 2000) && 
-            		  ((Math.abs(grandBuffer.get(grandBufferSize - 1) - grandBuffer.get(grandBufferSize - 2)) < 200))) {*/
-            	if(i >= 5) {
-            		if( (Math.abs(grandBuffer.get(i - 1)) + Math.abs(grandBuffer.get(i-2)) + 
-            			 Math.abs(grandBuffer.get(i-3)) + Math.abs(grandBuffer.get(i-4)) + 
-            			 Math.abs(grandBuffer.get(i-5)))/5 < 100) {
-            			// Is noise, keep the index
-            			lastNoiseIndex = i;
-            			//Log.d(TAG, "Noise");
+/*************************************************************
+ * DATA ANALYSIS
+ *************************************************************/
+	private int expectedZerosSpacing(int sampleRate, int pitch) {
+    	double Ts = 1.0 / sampleRate;
+    	double T = 1.0 / pitch;
+    	int numTsInT = (int) (T/Ts);
+    	int expectedSpacing = numTsInT / 2;
+    	return expectedSpacing;
+    }
+	private void bufferAnalysis() {
+		int expectedSelfSpacing = expectedZerosSpacing(micSampleRate, OTHER_TONE_FREQUENCY);
+		int expectedSelfSpacing_2 = expectedZerosSpacing(micSampleRate, OTHER_TONE_FREQUENCY_2);
+    	
+    	int expectedSpacing_1 = expectedSelfSpacing;
+    	int expectedSpacing_2 = expectedSelfSpacing_2;
+    	
+    	int listeningFor = 1;
+    	
+		final int CONSEQ_COUNT_THRESHOLD = 10;
+		int i_lastZero = 0;
+    	int conseqCount = 0;
+    	
+    	// Contains the index of the edge of each occurence of the second tone in each captured tone pair
+    	selfToneEdges.clear();
+    	otherToneEdges.clear();
+    	
+    	for (int i = 1; i < grandBuffer.size(); i++) {
+			
+        	if((conseqCount < CONSEQ_COUNT_THRESHOLD) &&
+        		((grandBuffer.get(i) < 0 && grandBuffer.get(i-1) > 0) || (grandBuffer.get(i) > 0 && grandBuffer.get(i-1) < 0))) {
+        		//Log.d(TAG, "Found a zero at index " + String.valueOf(i));
+        		if(listeningFor == 1) {
+        			Log.d(TAG, "Listening for 1");
+        			if(((i-i_lastZero) >= (expectedSpacing_1 - 1)) && 
+        					((i-i_lastZero) <= (expectedSpacing_1 + 1))) {
+        				conseqCount++;
+        				//Log.d(TAG, "Good spacing " + String.valueOf(i));
+        			} else {
+        				conseqCount = 0;
+        				//Log.d(TAG, "Bad spacing " + String.valueOf(i));
+        			}
+        			if(conseqCount >= CONSEQ_COUNT_THRESHOLD) {
+        				Log.d(TAG, "Transitioning to 2");
+        				//heard first tone
+        				listeningFor = 2;
+            			conseqCount = 0;
             		}
+        			
+        		} else if(listeningFor == 2) {
+        			Log.d(TAG, "Listening for 2");
+        			if(((i-i_lastZero) >= (expectedSpacing_2 - 1)) && 
+        					((i-i_lastZero) <= (expectedSpacing_2 + 1))) {
+        				
+        				if(otherToneEdges.size() < numTones/2) {
+        					otherToneEdges.add(i);
+        					Log.d(TAG, "Add to other");
+        					if(otherToneEdges.size() >= numTones/2) {
+        						expectedSpacing_1 = expectedZerosSpacing(micSampleRate, SELF_TONE_FREQUENCY);
+            					expectedSpacing_2 = expectedZerosSpacing(micSampleRate, SELF_TONE_FREQUENCY_2);
+            					Log.d(TAG, "Change expectations");
+        					}
+        				} else if(otherToneEdges.size() >= numTones/2 && selfToneEdges.size() < numTones/2) {
+        					selfToneEdges.add(i);
+        					Log.d(TAG, "Add to self");
+        					if(selfToneEdges.size() >= numTones/2) {
+        						Log.d(TAG, "break");
+            					break;
+        					}
+        					
+        				}
+        				listeningFor = 1;
+        			}
         		}
-            	if((conseqCount < CONSEQ_COUNT_THRESHOLD) &&
-            		((grandBuffer.get(i) < 0 && grandBuffer.get(i-1) > 0) || (grandBuffer.get(i) > 0 && grandBuffer.get(i-1) < 0))) {
-
-            		if(!heardSelf) {
-            			if(((i-i_lastZero) >= (expectedSelfSpacing - 1)) && 
-            					((i-i_lastZero) <= (expectedSelfSpacing + 1))) {
-            				conseqCount++;
-            				//Log.d(TAG, "Good spacing " + String.valueOf(i));
-            			} else {
-            				conseqCount = 0;
-            				//Log.d(TAG, "Bad spacing " + String.valueOf(i));
-            			}
-            			if(conseqCount >= CONSEQ_COUNT_THRESHOLD) {
-                			selfToneBeginningIndex = lastNoiseIndex;
-                			heardSelf = true;
-                			break;
-                		}
-            			
-            		} else if(!heardOther) {
-            			if(((i-i_lastZero) >= (expectedOtherSpacing - 1)) && 
-            					((i-i_lastZero) <= (expectedOtherSpacing + 1))) {
-            				conseqCount++;
-            			} else {
-            				conseqCount = 0;
-            			}
-            			if(conseqCount >= CONSEQ_COUNT_THRESHOLD) {
-                			otherToneBeginningIndex = lastNoiseIndex;//grandBuffer.size() - (conseqCount - 1) * expectedOtherSpacing;
-                			heardOther = true;
-                			heardSelf = false;
-                			conseqCount = 0;
-                		}
-            		}
-            		i_lastZero = i;
-            	}
-            }
-    		mSelfToneIndexText.setText("Self tone index: " + String.valueOf(selfToneBeginningIndex));
-    		mOtherToneIndexText.setText("Other tone index: " + String.valueOf(otherToneBeginningIndex));
-    		mIndexDiffText.setText("Index Diff: " + String.valueOf(otherToneBeginningIndex - selfToneBeginningIndex));
-    	}
+        		i_lastZero = i;
+        	}
+        }
+    	
+		if(selfToneEdges.size() >= numTones / 2 && otherToneEdges.size() >= numTones / 2) {
+			mSelfToneIndexText.setText("Self tone index: " + String.valueOf(selfToneEdges.get(0)) + " ,"
+					+ String.valueOf(selfToneEdges.get(1)) + " ,"
+					+ String.valueOf(selfToneEdges.get(2)));
+			mOtherToneIndexText.setText("Other tone index: " + String.valueOf(otherToneEdges.get(0)) + " ,"
+					+ String.valueOf(otherToneEdges.get(1)) + " ,"
+					+ String.valueOf(otherToneEdges.get(2)));
+			mIndexDiffText.setText("Index Diff: " + String.valueOf(selfToneEdges.get(0) - otherToneEdges.get(0)) + " ,"
+					+ String.valueOf(selfToneEdges.get(1) - otherToneEdges.get(1)) + " ,"
+					+ String.valueOf(selfToneEdges.get(2) - otherToneEdges.get(2)));
+		} else {
+				mIndexDiffText.setText("Only managed to find " + otherToneEdges.size() + " other tones and " + selfToneEdges.size() + " self tones.");
+		}
+	}
 /*************************************************************
  * FILE IO OPERATIONS
  *************************************************************/
@@ -479,7 +488,7 @@ public class MainActivity extends Activity {
      * Write all grandBuffer contents to a csv file.
      * @param buffer
      */
-    private void createBigBufferFile(List<Short> buffer, int selfIndex, int otherIndex) {
+    private void createBigBufferFile(List<Short> buffer, List<Integer>selfEdges, List<Integer>otherEdges) {
     	Calendar c = Calendar.getInstance(); 
         SimpleDateFormat dateFormat = new SimpleDateFormat("dd-MM-yyyy");
         SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm:ss");
@@ -496,8 +505,10 @@ public class MainActivity extends Activity {
     	    File file = new File(dir.getAbsolutePath(), FILE_NAME);
     	    try {
     	    	writer = new FileWriter(file);
-	            writeCsvHeader("SelfIndex", String.valueOf(selfIndex));
-	            writeCsvHeader("OtherIndex", String.valueOf(otherIndex));
+    	    	writeCsvHeader("Self edges", "Other edges");
+    	    	for(int i = 0; i < Math.min(selfEdges.size(), otherEdges.size()); i++) {
+    	    		writeCsvHeader(String.valueOf(selfEdges.get(i)), String.valueOf(otherEdges.get(i)));
+    	    	}
     	    	// Write contents of buffer in
 	            for(int i = 0; i < buffer.size(); i++) {
 	            	String line = buffer.get(i).toString() + "\n";
@@ -603,7 +614,7 @@ public class MainActivity extends Activity {
     }
 
     private void writeCsvHeader(String h1, String h2) throws IOException {
-	   String line = String.format("%s,%s\n", h1,h2);
+	   String line = String.format(" ,%s,%s\n", h1,h2);
 	   writer.write(line);
 	   }
 
