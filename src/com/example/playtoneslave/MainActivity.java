@@ -49,8 +49,8 @@ public class MainActivity extends Activity {
     // Speaker out variables
     private AudioTrack mAudioTrack;
     private final int speakerSampleRate = 8000;
-    private final double outToneDurationInS = 0.125;
-    private final int numTones = 12;
+    private final double outToneDurationInS = 0.5;
+    private final int numTones = 6;
     private final int numSamplesInTone_mic = (int) (micSampleRate * outToneDurationInS);
     private final int NUM_SAMPLES = (int) (speakerSampleRate * outToneDurationInS * numTones);
    
@@ -345,44 +345,7 @@ public class MainActivity extends Activity {
         	Log.d(TAG, "sample rate = " + String.valueOf(sampleRate) + " pitch = " + String.valueOf(pitch));
         	return expectedSpacing;
         }
-        /**
-         * Detect the presence of a tone and returns the index of beginning of tone.
-         * @param sampleRate
-         * @param pitch
-         * @param indices
-         * @return index of beginning of tone in the 512 buffer
-         */
-        private int detectTone(int sampleRate, int pitch, List<Integer> indices) {
-        	
-        	double Ts = 1.0 / sampleRate;
-        	double T = 1.0 / pitch;
-        	int numTsInT = (int) (T/Ts);
-        	int expectedSpacing = numTsInT / 2; // index spacing, 2 zero crossings in a single sinusoid
-        	
-        	int CONSEC_PATTERN_THRESHOLD = blockSize/expectedSpacing - 2;
-        	Log.d("Spacing", "Consec pattern threshold = " + String.valueOf(CONSEC_PATTERN_THRESHOLD));
-        	Log.d(TAG, "Expected spacing for " + String.valueOf(pitch) + " = " + String.valueOf(expectedSpacing));
-        	int diff = 0;
-        	int consecCount = 0;
-        	
-        	for(int i = 1; i < indices.size(); i++) {
-        		diff = indices.get(i) - indices.get(i-1);
-        		if((diff >= (expectedSpacing - 1)) && (diff <= (expectedSpacing + 1))) {
-        			consecCount++;
-        			Log.d("Spacing", "Spacing ok, index " + String.valueOf(i) + " = " + String.valueOf(indices.get(i)));
-        		} else {
-        			Log.e("Spacing", "Failed, index " + String.valueOf(i) + " = " + String.valueOf(indices.get(i)));
-        			return -1;
-        		}
-        		
-        		if(consecCount >= CONSEC_PATTERN_THRESHOLD) {
-        			Log.d("Spacing", "Woohoo conseq count = " + String.valueOf(consecCount));
-        			return indices.get(i-consecCount);
-        		}
-        	}
-        	return -1;
-        }
-        
+     
         public void reset() {
         	heardSelf = false;
         	heardOther = false;
@@ -400,11 +363,11 @@ public class MainActivity extends Activity {
     	return expectedSpacing;
     }
 	private void bufferAnalysis() {
-		int expectedSelfSpacing = expectedZerosSpacing(micSampleRate, OTHER_TONE_FREQUENCY);
-		int expectedSelfSpacing_2 = expectedZerosSpacing(micSampleRate, OTHER_TONE_FREQUENCY_2);
+		int expectedOtherSpacing = expectedZerosSpacing(micSampleRate, OTHER_TONE_FREQUENCY);
+		int expectedOtherSpacing_2 = expectedZerosSpacing(micSampleRate, OTHER_TONE_FREQUENCY_2);
     	
-    	int expectedSpacing_1 = expectedSelfSpacing;
-    	int expectedSpacing_2 = expectedSelfSpacing_2;
+    	int expectedSpacing_1 = expectedOtherSpacing;
+    	int expectedSpacing_2 = expectedOtherSpacing_2;
     	
     	int listeningFor = 1;
     	
@@ -412,20 +375,28 @@ public class MainActivity extends Activity {
 		int i_lastZero = 0;
     	int conseqCount = 0;
     	
+    	List<Integer> zeroCrossings = new ArrayList<Integer>();
     	// Contains the index of the edge of each occurence of the second tone in each captured tone pair
     	selfToneEdges.clear();
     	otherToneEdges.clear();
     	
     	for (int i = 1; i < grandBuffer.size(); i++) {
+
+			// Give up looking for the selfTones if we're more than halfway through the buffer
+			if(i > grandBuffer.size() / 2 && expectedSpacing_1 == expectedOtherSpacing){
+				expectedSpacing_1 = expectedZerosSpacing(micSampleRate, SELF_TONE_FREQUENCY);
+				expectedSpacing_2 = expectedZerosSpacing(micSampleRate, SELF_TONE_FREQUENCY_2);
+				Log.d(TAG, "Change expectations");
+			}
 			
-        	if((conseqCount < CONSEQ_COUNT_THRESHOLD) &&
-        		((grandBuffer.get(i) < 0 && grandBuffer.get(i-1) > 0) || (grandBuffer.get(i) > 0 && grandBuffer.get(i-1) < 0))) {
-        		//Log.d(TAG, "Found a zero at index " + String.valueOf(i));
+        	if(((grandBuffer.get(i) < 0 && grandBuffer.get(i-1) > 0) || (grandBuffer.get(i) > 0 && grandBuffer.get(i-1) < 0))) {
+        		zeroCrossings.add(i);
+        		Log.d(TAG, "Found a zero at index " + i);
         		if(listeningFor == 1) {
-        			Log.d(TAG, "Listening for 1");
+        			//Log.d(TAG, "Listening for 1");
         			if(((i-i_lastZero) >= (expectedSpacing_1 - 1)) && 
         					((i-i_lastZero) <= (expectedSpacing_1 + 1))) {
-        				conseqCount++;
+        				conseqCount = conseqCount < CONSEQ_COUNT_THRESHOLD ? conseqCount + 1 : conseqCount;
         				//Log.d(TAG, "Good spacing " + String.valueOf(i));
         			} else {
         				conseqCount = 0;
@@ -439,27 +410,37 @@ public class MainActivity extends Activity {
             		}
         			
         		} else if(listeningFor == 2) {
-        			Log.d(TAG, "Listening for 2");
+        			//Log.d(TAG, "Listening for 2");
         			if(((i-i_lastZero) >= (expectedSpacing_2 - 1)) && 
         					((i-i_lastZero) <= (expectedSpacing_2 + 1))) {
-        				
-        				if(otherToneEdges.size() < numTones/2) {
-        					otherToneEdges.add(i);
-        					Log.d(TAG, "Add to other");
-        					if(otherToneEdges.size() >= numTones/2) {
-        						expectedSpacing_1 = expectedZerosSpacing(micSampleRate, SELF_TONE_FREQUENCY);
-            					expectedSpacing_2 = expectedZerosSpacing(micSampleRate, SELF_TONE_FREQUENCY_2);
-            					Log.d(TAG, "Change expectations");
+        				conseqCount = conseqCount < CONSEQ_COUNT_THRESHOLD ? conseqCount + 1 : conseqCount;
+        			} else {
+        				conseqCount = 0;
+        			}
+        			if(conseqCount >= CONSEQ_COUNT_THRESHOLD) {
+        				for(int j = 1; j < zeroCrossings.size() * 2 /numTones; j++) {
+        					if((zeroCrossings.get(zeroCrossings.size() - j) 
+        					  - zeroCrossings.get(zeroCrossings.size() - j - 1)) > 3*expectedSpacing_2/2) {
+        						if(otherToneEdges.size() < numTones/2) {
+                					otherToneEdges.add(i);
+                					Log.d(TAG, "Add to other");
+                					if(otherToneEdges.size() >= numTones/2) {
+                						expectedSpacing_1 = expectedZerosSpacing(micSampleRate, SELF_TONE_FREQUENCY);
+                    					expectedSpacing_2 = expectedZerosSpacing(micSampleRate, SELF_TONE_FREQUENCY_2);
+                    					Log.d(TAG, "Change expectations");
+                					}
+                					break;
+                				} else if(otherToneEdges.size() >= numTones/2 && selfToneEdges.size() < numTones/2) {
+                					selfToneEdges.add(i);
+                					Log.d(TAG, "Add to self");
+                					if(selfToneEdges.size() >= numTones/2) {
+                						Log.d(TAG, "break");
+                					}
+                					break;
+                				}
         					}
-        				} else if(otherToneEdges.size() >= numTones/2 && selfToneEdges.size() < numTones/2) {
-        					selfToneEdges.add(i);
-        					Log.d(TAG, "Add to self");
-        					if(selfToneEdges.size() >= numTones/2) {
-        						Log.d(TAG, "break");
-            					break;
-        					}
-        					
         				}
+        				conseqCount = 0;
         				listeningFor = 1;
         			}
         		}
@@ -467,18 +448,14 @@ public class MainActivity extends Activity {
         	}
         }
     	
-		if(selfToneEdges.size() >= numTones / 2 && otherToneEdges.size() >= numTones / 2) {
-			mSelfToneIndexText.setText("Self tone index: " + String.valueOf(selfToneEdges.get(0)) + " ,"
-					+ String.valueOf(selfToneEdges.get(1)) + " ,"
-					+ String.valueOf(selfToneEdges.get(2)));
-			mOtherToneIndexText.setText("Other tone index: " + String.valueOf(otherToneEdges.get(0)) + " ,"
-					+ String.valueOf(otherToneEdges.get(1)) + " ,"
-					+ String.valueOf(otherToneEdges.get(2)));
-			mIndexDiffText.setText("Index Diff: " + String.valueOf(selfToneEdges.get(0) - otherToneEdges.get(0)) + " ,"
-					+ String.valueOf(selfToneEdges.get(1) - otherToneEdges.get(1)) + " ,"
-					+ String.valueOf(selfToneEdges.get(2) - otherToneEdges.get(2)));
-		} else {
-				mIndexDiffText.setText("Only managed to find " + otherToneEdges.size() + " other tones and " + selfToneEdges.size() + " self tones.");
+    	mSelfToneIndexText.setText("Self tone indices:");
+		mOtherToneIndexText.setText("Other tone indices:");
+		mIndexDiffText.setText("Index diffs:");
+		//if(selfToneEdges.size() >= numTones / 2 && otherToneEdges.size() >= numTones / 2) {
+		for(int i = 0; i < Math.min(selfToneEdges.size(), otherToneEdges.size()); i++) {
+			mSelfToneIndexText.setText(mSelfToneIndexText.getText() + " " + String.valueOf(selfToneEdges.get(i)));
+			mOtherToneIndexText.setText(mOtherToneIndexText.getText() + " " + String.valueOf(otherToneEdges.get(i)));
+			mIndexDiffText.setText(mIndexDiffText.getText() + " " + String.valueOf(otherToneEdges.get(i) - selfToneEdges.get(i)));
 		}
 	}
 /*************************************************************
@@ -529,81 +506,6 @@ public class MainActivity extends Activity {
     	}
     }
     
-    private void createBigDiffFile(List<Integer> buffer) {
-    	Calendar c = Calendar.getInstance(); 
-        SimpleDateFormat dateFormat = new SimpleDateFormat("dd-MM-yyyy");
-        SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm:ss");
-        dateFormat.setTimeZone(c.getTimeZone());
-        timeFormat.setTimeZone(c.getTimeZone());
-    	String FILE_NAME = timeFormat.format(c.getTime())+"_DiffList.csv";
-    	if (isExternalStorageWritable()) {
-    		File root = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS); 
-    		File dir = new File (root.getAbsolutePath() + "/Thesis/" + dateFormat.format(c.getTime()));
-    	    if (!dir.exists()) {
-                dir.mkdirs();
-            }
-    	    //Toast.makeText(this, dir.toString(), Toast.LENGTH_SHORT).show();
-    	    File file = new File(dir.getAbsolutePath(), FILE_NAME);
-    	    try {
-    	    	writer = new FileWriter(file);
-	            
-    	    	// Write contents of buffer in
-	            for(int i = 0; i < buffer.size(); i++) {
-	            	String line = buffer.get(i).toString() + "\n";
-	          	  	writer.write(line);
-	            }
-	            
-	            writer.flush();
-	            writer.close(); 
-	            Log.d("FILEIO", "FINISHED WRITING");
-	            Toast.makeText(this, "Buffer written to file.", Toast.LENGTH_SHORT).show();
-	            mStatusText.setText(init_s);
-    	    } catch (IOException e) {
-    	        e.printStackTrace();
-    	    }    
-    	} else {
-    	
-    		Log.d("ERROR", "External storage not writable");
-    	}
-    }
-
-	private void createBigRecordAudioDurationFile(List<Long> buffer) {
-    	Calendar c = Calendar.getInstance(); 
-        SimpleDateFormat dateFormat = new SimpleDateFormat("dd-MM-yyyy");
-        SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm:ss");
-        dateFormat.setTimeZone(c.getTimeZone());
-        timeFormat.setTimeZone(c.getTimeZone());
-    	String FILE_NAME = timeFormat.format(c.getTime())+"AudioRecordDuration.csv";
-    	if (isExternalStorageWritable()) {
-    		File root = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS); 
-    		File dir = new File (root.getAbsolutePath() + "/Thesis/" + dateFormat.format(c.getTime()));
-    	    if (!dir.exists()) {
-                dir.mkdirs();
-            }
-    	    //Toast.makeText(this, dir.toString(), Toast.LENGTH_SHORT).show();
-    	    File file = new File(dir.getAbsolutePath(), FILE_NAME);
-    	    try {
-    	    	writer = new FileWriter(file);
-	            
-    	    	// Write contents of buffer in
-	            for(int i = 0; i < buffer.size(); i++) {
-	            	String line = buffer.get(i).toString() + "\n";
-	          	  	writer.write(line);
-	            }
-	            
-	            writer.flush();
-	            writer.close(); 
-	            Log.d("FILEIO", "FINISHED WRITING");
-	            //Toast.makeText(this, "Buffer written to file.", Toast.LENGTH_SHORT).show();
-    	    } catch (IOException e) {
-    	        e.printStackTrace();
-    	    }    
-    	} else {
-    	
-    		Log.d("ERROR", "External storage not writable");
-    	}
-    }
-    
     /* Checks if external storage is available for read and write */
     public boolean isExternalStorageWritable() {
         String state = Environment.getExternalStorageState();
@@ -617,9 +519,4 @@ public class MainActivity extends Activity {
 	   String line = String.format(" ,%s,%s\n", h1,h2);
 	   writer.write(line);
 	   }
-
-	private void writeCsvData(long selfTime, long waitTime, long selfAudioRecordDelay) throws IOException {  
-	  String line = String.format("%d,%d,%d\n", selfTime, waitTime, selfAudioRecordDelay);
-	  writer.write(line);
-	}
 }
