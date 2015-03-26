@@ -1649,19 +1649,21 @@ containing a value of this type.
         public static final int action_mode_bar=0x7f050030;
         public static final int action_mode_bar_stub=0x7f05002f;
         public static final int action_mode_close_button=0x7f050022;
-        public static final int action_settings=0x7f050048;
         public static final int activity_chooser_view_content=0x7f050023;
         public static final int always=0x7f05000d;
         public static final int beginning=0x7f050012;
         public static final int bottom=0x7f050016;
         public static final int button1=0x7f050042;
         public static final int button2=0x7f050043;
+        public static final int button_scan=0x7f05004e;
         public static final int checkbox=0x7f05002b;
         public static final int collapseActionView=0x7f05000f;
+        public static final int connect_scan=0x7f05004f;
         public static final int decor_content_parent=0x7f050031;
         public static final int default_activity_button=0x7f050026;
         public static final int dialog=0x7f050010;
         public static final int disableHome=0x7f05000a;
+        public static final int discoverable=0x7f050050;
         public static final int dropdown=0x7f050011;
         public static final int edit_query=0x7f050035;
         public static final int end=0x7f050014;
@@ -1676,8 +1678,10 @@ containing a value of this type.
         public static final int list_item=0x7f050027;
         public static final int middle=0x7f050013;
         public static final int never=0x7f05000b;
+        public static final int new_devices=0x7f05004d;
         public static final int none=0x7f050004;
         public static final int normal=0x7f050001;
+        public static final int paired_devices=0x7f05004b;
         public static final int progress_circular=0x7f05001e;
         public static final int progress_horizontal=0x7f05001f;
         public static final int radio=0x7f05002d;
@@ -1704,6 +1708,10 @@ containing a value of this type.
         public static final int textView4=0x7f050044;
         public static final int textView5=0x7f050047;
         public static final int title=0x7f050029;
+        public static final int title_left_text=0x7f050048;
+        public static final int title_new_devices=0x7f05004c;
+        public static final int title_paired_devices=0x7f05004a;
+        public static final int title_right_text=0x7f050049;
         public static final int top=0x7f050015;
         public static final int up=0x7f050018;
         public static final int useLogo=0x7f050005;
@@ -1760,10 +1768,14 @@ containing a value of this type.
         public static final int abc_search_view=0x7f030015;
         public static final int abc_simple_dropdown_hint=0x7f030016;
         public static final int activity_main=0x7f030017;
-        public static final int support_simple_spinner_dropdown_item=0x7f030018;
+        public static final int custom_title=0x7f030018;
+        public static final int device_list=0x7f030019;
+        public static final int device_name=0x7f03001a;
+        public static final int message=0x7f03001b;
+        public static final int support_simple_spinner_dropdown_item=0x7f03001c;
     }
     public static final class menu {
-        public static final int main=0x7f0c0000;
+        public static final int option_menu=0x7f0c0000;
     }
     public static final class string {
         /**  Content description for the action bar "home" affordance. [CHAR LIMIT=NONE] 
@@ -1821,19 +1833,31 @@ containing a value of this type.
         public static final int abc_shareactionprovider_share_with_application=0x7f0a000d;
         public static final int action_settings=0x7f0a0011;
         public static final int app_name=0x7f0a000f;
+        public static final int bt_not_enabled_leaving=0x7f0a0014;
+        public static final int button_scan=0x7f0a001e;
+        /**  Options Menu 
+         */
+        public static final int connect=0x7f0a001f;
+        public static final int discoverable=0x7f0a0020;
         public static final int hello_world=0x7f0a0010;
+        public static final int none_found=0x7f0a001b;
+        public static final int none_paired=0x7f0a001a;
+        public static final int not_connected=0x7f0a0013;
+        /**   DeviceListActivity 
+         */
+        public static final int scanning=0x7f0a0018;
+        public static final int select_device=0x7f0a0019;
+        /**   BluetoothChat 
+         */
+        public static final int send=0x7f0a0012;
+        public static final int title_connected_to=0x7f0a0016;
+        public static final int title_connecting=0x7f0a0015;
+        public static final int title_not_connected=0x7f0a0017;
+        public static final int title_other_devices=0x7f0a001d;
+        public static final int title_paired_devices=0x7f0a001c;
     }
     public static final class style {
         /** 
-        Base application theme, dependent on API level. This theme is replaced
-        by AppBaseTheme from res/values-vXX/styles.xml on newer devices.
-    
-
-            Theme customizations available in newer API levels can go in
-            res/values-vXX/styles.xml, while customizations related to
-            backward-compatibility can go here.
-        
-
         Base application theme for API 11+. This theme completely replaces
         AppBaseTheme from res/values/styles.xml on API 11+ devices.
     
@@ -1846,10 +1870,6 @@ containing a value of this type.
  API 14 theme customizations can go here. 
          */
         public static final int AppBaseTheme=0x7f0b00eb;
-        /**  Application theme. 
- All customizations that are NOT specific to a particular API-level can go here. 
-         */
-        public static final int AppTheme=0x7f0b00ec;
         public static final int Base_TextAppearance_AppCompat=0x7f0b0098;
         public static final int Base_TextAppearance_AppCompat_Body1=0x7f0b00a3;
         public static final int Base_TextAppearance_AppCompat_Body2=0x7f0b00a2;

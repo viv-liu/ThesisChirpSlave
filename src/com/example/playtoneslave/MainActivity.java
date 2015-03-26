@@ -6,9 +6,13 @@ import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Collections;
 import java.util.List;
 
+import android.app.ActionBar;
 import android.app.Activity;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
 import android.content.Intent;
 import android.media.AudioFormat;
 import android.media.AudioManager;
@@ -18,10 +22,18 @@ import android.media.MediaRecorder;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Message;
 import android.util.Log;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
 import android.view.View;
 import android.view.View.OnClickListener;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.EditText;
+import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -51,7 +63,7 @@ public class MainActivity extends Activity {
     private final int speakerSampleRate = 8000;
     private final double outToneDurationInS = 0.5;
     private final int numTones = 6;
-    private final int numSamplesInTone_mic = (int) (micSampleRate * outToneDurationInS);
+    //private final int numSamplesInTone_mic = (int) (micSampleRate * outToneDurationInS);
     private final int NUM_SAMPLES = (int) (speakerSampleRate * outToneDurationInS * numTones);
    
     private final double sample[] = new double[NUM_SAMPLES];
@@ -75,14 +87,51 @@ public class MainActivity extends Activity {
     private String recording_s = "Recording in progress...";
     private String saving_s = "Saving buffer contents to file...";
     
-    // File operations
-    FileWriter writer;
     private List<Short> grandBuffer;
     
+ // Debugging
+ 	private static final boolean D = true;
+
+ 	// Message types sent from the BluetoothChatService Handler
+ 	public static final int MESSAGE_STATE_CHANGE = 1;
+ 	public static final int MESSAGE_READ = 2;
+ 	public static final int MESSAGE_WRITE = 3;
+ 	public static final int MESSAGE_DEVICE_NAME = 4;
+ 	public static final int MESSAGE_TOAST = 5;
+
+ 	// Key names received from the BluetoothChatService Handler
+ 	public static final String DEVICE_NAME = "device_name";
+ 	public static final String TOAST = "toast";
+
+ 	// Intent request codes
+ 	private static final int REQUEST_CONNECT_DEVICE = 2;
+ 	private static final int REQUEST_ENABLE_BT = 3;
+
+ 	// Name of the connected device
+ 	private String mConnectedDeviceName = null;
+ 	// String buffer for outgoing messages
+ 	private StringBuffer mOutStringBuffer;
+ 	// Local Bluetooth adapter
+ 	private BluetoothAdapter mBluetoothAdapter = null;
+ 	// Member object for the chat services
+ 	private BluetoothChatService mChatService = null;
+ 	
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        
+        // Get local Bluetooth adapter
+		mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+		
+		// If the adapter is null, then Bluetooth is not supported
+		if (mBluetoothAdapter == null) {
+			Toast.makeText(this, "Bluetooth is not available",
+					Toast.LENGTH_LONG).show();
+			finish();
+			return;
+		}
+     		
         genTone();
         grandBuffer  = new ArrayList<Short>();
         
@@ -154,22 +203,255 @@ public class MainActivity extends Activity {
     }
 
     @Override
-    protected void onPause() {
-    	super.onPause();
-    	if(mAudioTrack != null) mAudioTrack.release();
-    	if(recordTask != null) recordTask.cancel(false);
-    }
-    
-    @Override
-    protected void onResume() {
-    	super.onResume();
-    	mAudioTrack = new AudioTrack(AudioManager.STREAM_MUSIC,
+	public void onStart() {
+		super.onStart();
+		if (D)
+			Log.e(TAG, "++ ON START ++");
+
+		// If BT is not on, request that it be enabled.
+		// setupChat() will then be called during onActivityResult
+		if (!mBluetoothAdapter.isEnabled()) {
+			Intent enableIntent = new Intent(
+					BluetoothAdapter.ACTION_REQUEST_ENABLE);
+			startActivityForResult(enableIntent, REQUEST_ENABLE_BT);
+			// Otherwise, setup the chat session
+		} else {
+			if (mChatService == null)
+				setupChat();
+		}
+	}
+
+	@Override
+	public synchronized void onResume() {
+		super.onResume();
+		if (D)
+			Log.e(TAG, "+ ON RESUME +");
+		
+		mAudioTrack = new AudioTrack(AudioManager.STREAM_MUSIC,
                 speakerSampleRate, AudioFormat.CHANNEL_OUT_MONO,
                 AudioFormat.ENCODING_PCM_16BIT, generatedSnd.length,
                 AudioTrack.MODE_STATIC);
         mAudioTrack.write(generatedSnd, 0, generatedSnd.length);
-    }
+        
+		// Performing this check in onResume() covers the case in which BT was
+		// not enabled during onStart(), so we were paused to enable it...
+		// onResume() will be called when ACTION_REQUEST_ENABLE activity
+		// returns.
+		if (mChatService != null) {
+			// Only if the state is STATE_NONE, do we know that we haven't
+			// started already
+			if (mChatService.getState() == BluetoothChatService.STATE_NONE) {
+				// Start the Bluetooth chat services
+				mChatService.start();
+			}
+		}
+	}
+
+	private void setupChat() {
+		Log.d(TAG, "setupChat()");
+
+		// Initialize the BluetoothChatService to perform bluetooth connections
+		mChatService = new BluetoothChatService(this, mHandler);
+
+		// Initialize the buffer for outgoing messages
+		mOutStringBuffer = new StringBuffer("");
+	}
+
+	@Override
+	public synchronized void onPause() {
+		super.onPause();
+		if (D)
+			Log.e(TAG, "- ON PAUSE -");
+    	if(mAudioTrack != null) mAudioTrack.release();
+    	if(recordTask != null) recordTask.cancel(false);
+	}
+
+	@Override
+	public void onStop() {
+		super.onStop();
+		if (D)
+			Log.e(TAG, "-- ON STOP --");
+	}
+
+	@Override
+	public void onDestroy() {
+		super.onDestroy();
+		// Stop the Bluetooth chat services
+		if (mChatService != null)
+			mChatService.stop();
+		if (D)
+			Log.e(TAG, "--- ON DESTROY ---");
+	}
+
+	private void ensureDiscoverable() {
+		if (D)
+			Log.d(TAG, "ensure discoverable");
+		if (mBluetoothAdapter.getScanMode() != BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE) {
+			Intent discoverableIntent = new Intent(
+					BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE);
+			discoverableIntent.putExtra(
+					BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300);
+			startActivity(discoverableIntent);
+		}
+	}
     
+	/**
+	 * Sends a message.
+	 * 
+	 * @param message
+	 *            A string of text to send.
+	 */
+	private void sendMessage(String message) {
+		// Check that we're actually connected before trying anything
+		if (mChatService.getState() != BluetoothChatService.STATE_CONNECTED) {
+			Toast.makeText(this, R.string.not_connected, Toast.LENGTH_SHORT)
+					.show();
+			return;
+		}
+
+		// Check that there's actually something to send
+		if (message.length() > 0) {
+			// Get the message bytes and tell the BluetoothChatService to write
+			byte[] send = message.getBytes();
+			mChatService.write(send);
+			Toast.makeText(this, "Writing " + message, Toast.LENGTH_LONG).show();
+
+			// Reset out string buffer to zero and clear the edit text field
+			mOutStringBuffer.setLength(0);
+		}
+	}
+	
+	private final void setStatus(int resId) {
+		final ActionBar actionBar = getActionBar();
+		actionBar.setSubtitle(resId);
+	}
+
+	private final void setStatus(CharSequence subTitle) {
+		final ActionBar actionBar = getActionBar();
+		actionBar.setSubtitle(subTitle);
+	}
+	
+	// The Handler that gets information back from the BluetoothChatService
+		private final Handler mHandler = new Handler() {
+			@Override
+			public void handleMessage(Message msg) {
+				switch (msg.what) {
+				case MESSAGE_STATE_CHANGE:
+					if (D)
+						Log.i(TAG, "MESSAGE_STATE_CHANGE: " + msg.arg1);
+					switch (msg.arg1) {
+					case BluetoothChatService.STATE_CONNECTED:
+						setStatus(getString(R.string.title_connected_to,
+								mConnectedDeviceName));
+						break;
+					case BluetoothChatService.STATE_CONNECTING:
+						setStatus(R.string.title_connecting);
+						break;
+					case BluetoothChatService.STATE_LISTEN:
+					case BluetoothChatService.STATE_NONE:
+						setStatus(R.string.title_not_connected);
+						break;
+					}
+					break;
+				case MESSAGE_WRITE:
+					byte[] writeBuf = (byte[]) msg.obj;
+					// construct a string from the buffer
+					String writeMessage = new String(writeBuf);
+					break;
+				case MESSAGE_READ:
+					byte[] readBuf = (byte[]) msg.obj;
+					// construct a string from the valid bytes in the buffer
+					String readMessage = new String(readBuf, 0, msg.arg1);
+					// Immediately send a message back to master upon receiving anything
+					// Check that we're actually connected before trying anything
+					if (mChatService.getState() != BluetoothChatService.STATE_CONNECTED) {
+						Toast.makeText(MainActivity.this, R.string.not_connected, Toast.LENGTH_SHORT)
+								.show();
+						return;
+					}
+					String message = "deflected!";
+					// Get the message bytes and tell the BluetoothChatService to write
+					byte[] send = message.getBytes();
+					mChatService.write(send);
+
+					// Reset out string buffer to zero and clear the edit text field
+					mOutStringBuffer.setLength(0);
+					break;
+				case MESSAGE_DEVICE_NAME:
+					// save the connected device's name
+					mConnectedDeviceName = msg.getData().getString(DEVICE_NAME);
+					Toast.makeText(getApplicationContext(),
+							"Connected to " + mConnectedDeviceName,
+							Toast.LENGTH_SHORT).show();
+					break;
+				case MESSAGE_TOAST:
+					Toast.makeText(getApplicationContext(),
+							msg.getData().getString(TOAST), Toast.LENGTH_SHORT)
+							.show();
+					break;
+				}
+			}
+		};
+
+		public void onActivityResult(int requestCode, int resultCode, Intent data) {
+			if (D)
+				Log.d(TAG, "onActivityResult " + resultCode);
+			switch (requestCode) {
+			case REQUEST_CONNECT_DEVICE:
+				// When DeviceListActivity returns with a device to connect
+				if (resultCode == Activity.RESULT_OK) {
+					connectDevice(data);
+				}
+				break;
+			case REQUEST_ENABLE_BT:
+				// When the request to enable Bluetooth returns
+				if (resultCode == Activity.RESULT_OK) {
+					// Bluetooth is now enabled, so set up a chat session
+					setupChat();
+				} else {
+					// User did not enable Bluetooth or an error occurred
+					Log.d(TAG, "BT not enabled");
+					Toast.makeText(this, R.string.bt_not_enabled_leaving,
+							Toast.LENGTH_SHORT).show();
+					finish();
+				}
+			}
+		}
+
+		private void connectDevice(Intent data) {
+			// Get the device MAC address
+			String address = data.getExtras().getString(
+					DeviceListActivity.EXTRA_DEVICE_ADDRESS);
+			// Get the BluetoothDevice object
+			BluetoothDevice device = mBluetoothAdapter.getRemoteDevice(address);
+			// Attempt to connect to the device
+			mChatService.connect(device);
+		}
+
+		@Override
+		public boolean onCreateOptionsMenu(Menu menu) {
+			MenuInflater inflater = getMenuInflater();
+			inflater.inflate(R.menu.option_menu, menu);
+			return true;
+		}
+
+		@Override
+		public boolean onOptionsItemSelected(MenuItem item) {
+			Intent serverIntent = null;
+			switch (item.getItemId()) {
+			case R.id.connect_scan:
+				// Launch the DeviceListActivity to see devices and do scan
+				serverIntent = new Intent(this, DeviceListActivity.class);
+				startActivityForResult(serverIntent, REQUEST_CONNECT_DEVICE);
+				return true;
+			case R.id.discoverable:
+				// Ensure this device is discoverable by others
+				ensureDiscoverable();
+				return true;
+			}
+			return false;
+		}
+		
     void genTone(){
     	int numSamplesPerTone = (int) (speakerSampleRate * outToneDurationInS);
     	int curFreq = SELF_TONE_FREQUENCY;
@@ -448,6 +730,32 @@ public class MainActivity extends Activity {
         	}
         }
     	
+    	List<Integer> deltas = new ArrayList<Integer>();
+    	// Populate deltas list with index differences
+    	for(int k = 0; k < Math.min(selfToneEdges.size(),  otherToneEdges.size()); k++) {
+    		deltas.add(Math.abs(selfToneEdges.get(k) - otherToneEdges.get(k)));
+    	}
+    	
+    	// Compute differences between these indices to remove outliers
+    	Collections.sort(deltas);
+    	
+    	double finalResult = (double) deltas.get(deltas.size() / 2); // Default middle of array
+    	int smallestDeltaDifference = 5000; // Arbitrary high value
+    	for(int m = 1; m < deltas.size(); m++) {
+    		if(Math.abs(deltas.get(m) - deltas.get(m-1)) < smallestDeltaDifference) {
+    			smallestDeltaDifference = Math.abs(deltas.get(m) - deltas.get(m-1));
+    			finalResult = (double)(deltas.get(m) + deltas.get(m-1))/ 2;
+    		}
+    		// Exit this loop if two deltas agree nicely
+    		if(Math.abs(deltas.get(m) - deltas.get(m-1)) <= 2) {
+    			break;
+    		} 
+    	}
+    	if(Math.abs(deltas.get(0) - deltas.get(deltas.size() - 1)) < smallestDeltaDifference) {
+			smallestDeltaDifference = Math.abs(deltas.get(0) - deltas.get(deltas.size() - 1));
+			finalResult = (double)(deltas.get(0) + deltas.get(deltas.size() - 1))/ 2;
+		}
+    	sendMessage(String.valueOf(finalResult));
     	mSelfToneIndexText.setText("Self tone indices:");
 		mOtherToneIndexText.setText("Other tone indices:");
 		mIndexDiffText.setText("Index diffs:");
@@ -481,10 +789,10 @@ public class MainActivity extends Activity {
     	    //Toast.makeText(this, dir.toString(), Toast.LENGTH_SHORT).show();
     	    File file = new File(dir.getAbsolutePath(), FILE_NAME);
     	    try {
-    	    	writer = new FileWriter(file);
-    	    	writeCsvHeader("Self edges", "Other edges");
+    	    	FileWriter writer = new FileWriter(file);
+    	    	writeCsvHeader(writer, "Self edges", "Other edges");
     	    	for(int i = 0; i < Math.min(selfEdges.size(), otherEdges.size()); i++) {
-    	    		writeCsvHeader(String.valueOf(selfEdges.get(i)), String.valueOf(otherEdges.get(i)));
+    	    		writeCsvHeader(writer, String.valueOf(selfEdges.get(i)), String.valueOf(otherEdges.get(i)));
     	    	}
     	    	// Write contents of buffer in
 	            for(int i = 0; i < buffer.size(); i++) {
@@ -515,7 +823,7 @@ public class MainActivity extends Activity {
         return false;
     }
 
-    private void writeCsvHeader(String h1, String h2) throws IOException {
+    private void writeCsvHeader(FileWriter writer, String h1, String h2) throws IOException {
 	   String line = String.format(" ,%s,%s\n", h1,h2);
 	   writer.write(line);
 	   }
